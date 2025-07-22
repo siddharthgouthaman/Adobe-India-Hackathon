@@ -140,4 +140,3 @@ def process_pdfs_in_directory():
 
 if __name__ == "__main__":
     process_pdfs_in_directory()
-    #hehe
