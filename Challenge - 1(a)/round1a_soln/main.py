@@ -2,141 +2,126 @@ import os
 import json
 from pathlib import Path
 import fitz  # PyMuPDF
-from collections import Counter
+import re
+from collections import defaultdict
 
 def extract_outline_from_pdf(pdf_path: Path) -> dict:
-    title = "Untitled Document"
-    outline = []
-    
-    all_text_elements = []  # List to hold text metadata
-    text_size_counts = Counter()  # Count font sizes for heuristics
-    
-    try:
-        doc = fitz.open(pdf_path)
-        
-        for page_num, page in enumerate(doc):
-            blocks = page.get_text("dict")["blocks"]
-            for block in blocks:
-                if block["type"] == 0:  # Text block
-                    for line in block["lines"]:
-                        for span in line["spans"]:
-                            text = span["text"].strip()
-                            if not text:
-                                continue
-                            
-                            font_size = round(span["size"], 1)
-                            x0 = round(span["bbox"][0], 2)
-                            y0 = round(span["bbox"][1], 2)  # Top y-coordinate
-                            is_bold = "bold" in span["font"].lower()
-                            
-                            all_text_elements.append({
-                                "text": text,
-                                "page": page_num + 1,  # Adjust for 1-based paging
-                                "font_size": font_size,
-                                "x0": x0,
-                                "y0": y0,
-                                "is_bold": is_bold
-                            })
-                            text_size_counts[font_size] += 1
-        
-        doc.close()
-        
-        if not all_text_elements:
-            return {"title": title, "outline": []}
-        
-        # Step 1: Determine body font size (most common)
-        sorted_sizes_by_freq = sorted(text_size_counts.items(), key=lambda item: item[1], reverse=True)
-        body_font_size = sorted_sizes_by_freq[0][0] if sorted_sizes_by_freq else 0
-        
-        # Step 2: Potential heading sizes (larger than body)
-        unique_sizes = sorted(set(text_size_counts.keys()), reverse=True)
-        potential_heading_sizes = [s for s in unique_sizes if s > body_font_size * 1.05]
-        
-        # Step 3: Ratio-based heading level map
-        heading_level_map = {}
-        levels = ["H1", "H2", "H3"]
-        if potential_heading_sizes:
-            heading_level_map[potential_heading_sizes[0]] = levels[0]
-            prev_size = potential_heading_sizes[0]
-            current_level = 1
-            for size in potential_heading_sizes[1:]:
-                if current_level >= len(levels):
-                    break
-                ratio = size / prev_size
-                if ratio < 0.85:  # Significant drop -> next level
-                    heading_level_map[size] = levels[current_level]
-                    prev_size = size
-                    current_level += 1
-                else:
-                    heading_level_map[size] = levels[current_level - 1]  # Same level
-        
-        # Step 4: Improved Title Detection (concat multi-line if close)
-        page_1_elements = sorted([el for el in all_text_elements if el["page"] == 1],
-                                 key=lambda x: (-x["font_size"], x["y0"]))
-        title_parts = []
-        if page_1_elements:
-            candidate = page_1_elements[0]
-            if candidate["font_size"] > body_font_size * 1.5:
-                title_parts.append(candidate["text"])
-                # Check for nearby lines (within 50pt y-diff)
-                for el in page_1_elements[1:]:
-                    if abs(el["y0"] - candidate["y0"]) < 50 and el["font_size"] == candidate["font_size"]:
-                        title_parts.append(el["text"])
-                    else:
-                        break
-                title = " ".join(title_parts).strip()
-                # Remove title elements
-                all_text_elements = [el for el in all_text_elements if el["text"] not in title_parts or el["page"] != 1]
-        
-        # Step 5: Collect headings (relaxed filters)
-        candidates = []
-        for el in all_text_elements:
-            if (
-                el["font_size"] in heading_level_map
-                and (el["is_bold"] or el["font_size"] > body_font_size * 1.2)  # Allow non-bold if large
-                and el["x0"] < 150  # Relaxed left-align
-                and len(el["text"]) < 150  # Relaxed length
-            ):
-                level = heading_level_map[el["font_size"]]
-                candidates.append({
-                    "level": level,
-                    "text": el["text"],
-                    "page": el["page"]
-                })
-        
-        # Step 6: Deduplicate and sort by page + y0 (top to bottom)
-        seen = set()
-        unique_outline = []
-        for entry in sorted(candidates, key=lambda x: (x["page"], all_text_elements[0]["y0"] if "y0" in all_text_elements[0] else 0)):
-            key = (entry["level"], entry["text"], entry["page"])
-            if key not in seen:
-                unique_outline.append(entry)
-                seen.add(key)
-        
-        return {"title": title, "outline": unique_outline}
-    
-    except Exception as e:
-        return {"title": "Processing Failed", "outline": [], "error": str(e)}
+    all_text_elements = []
+    text_size_counts = {}
 
-# Main execution for Docker: Process all PDFs in /app/input
-INPUT_DIR = Path("/app/input")
-OUTPUT_DIR = Path("/app/output")
+    doc = fitz.open(pdf_path)
+    for page_num, page in enumerate(doc):
+        blocks = page.get_text("dict")["blocks"]
+        for block in blocks:
+            if block["type"] == 0:
+                for line in block["lines"]:
+                    for span in line["spans"]:
+                        text = span["text"].strip()
+                        if not text:
+                            continue
+                        font_size = round(span["size"], 2)
+                        font_name = span["font"].lower()
+                        is_bold = any(w in font_name for w in ["bold", "black", "heavy", "bd"])
+                        all_text_elements.append({
+                            "text": text,
+                            "page": page_num,
+                            "font_size": font_size,
+                            "x0": round(span["bbox"][0], 2),
+                            "y0": round(span["bbox"][1], 2),
+                            "is_bold": is_bold
+                        })
+                        text_size_counts[font_size] = text_size_counts.get(font_size, 0) + 1
+    doc.close()
+
+    # --- TITLE EXTRACTION ---
+    page1 = [el for el in all_text_elements if el["page"] == 0]
+    title_lines = defaultdict(list)
+    max_font = max(el["font_size"] for el in page1) if page1 else 0
+    for el in page1:
+        if abs(el["font_size"] - max_font) < 0.5:
+            y = round(el["y0"])
+            title_lines[y].append(el)
+
+    full_title_parts = []
+    for y in sorted(title_lines.keys()):
+        line_spans = sorted(title_lines[y], key=lambda e: e["x0"])
+        line_text = " ".join(span["text"] for span in line_spans)
+        full_title_parts.append(line_text)
+
+    raw_title = "  ".join(full_title_parts)
+    # Remove repeated overlapping OCR words (like "Proposal oposal")
+    raw_title = re.sub(r"\b(\w{3,})\b(?:\s+\1\b)+", r"\1", raw_title)
+    raw_title = re.sub(r"\s+", " ", raw_title)
+    title = raw_title.strip()
+
+    # --- HEADING DETECTION ---
+    body_font_size = max(text_size_counts, key=text_size_counts.get) if text_size_counts else 10.0
+    unique_sizes = sorted(set(text_size_counts.keys()), reverse=True)
+    heading_sizes = [sz for sz in unique_sizes if sz > body_font_size * 1.05]
+    heading_level_map = {sz: f"H{min(i+1, 5)}" for i, sz in enumerate(heading_sizes)}
+
+    candidates = []
+    combined_lines = defaultdict(str)
+
+    for el in all_text_elements:
+        text = el["text"].strip()
+        if not text or len(text) < 3:
+            continue
+        if len(text.split()) > 18:
+            continue
+        if re.match(r"^[\u2022\-•]$", text):  # skip bullet-only lines
+            continue
+        is_heading = (
+            (el["font_size"] in heading_level_map and el["x0"] < 150) or
+            (el["is_bold"] and el["font_size"] > body_font_size and el["x0"] < 150)
+        )
+        if is_heading:
+            key = (el["page"], round(el["y0"]))
+            combined_lines[key] += (" " + text if combined_lines[key] else text)
+
+    outline = []
+    seen = set()
+    for (page, y), text in sorted(combined_lines.items()):
+        clean_text = text.strip()
+        if not clean_text or len(clean_text) < 3:
+            continue
+        if clean_text.lower() in {"rfp", "to", "for"}:
+            continue
+        if re.match(r"^\d+\.\d+", clean_text):
+            level = "H3"
+        elif re.match(r"^\d+\.", clean_text):
+            level = "H1"
+        elif re.match(r"^appendix [a-z]:", clean_text.lower()):
+            level = "H2"
+        elif clean_text.endswith(":"):
+            level = "H3"
+        elif any(word in clean_text.lower() for word in ["summary", "background", "milestones"]):
+            level = "H2"
+        else:
+            level = "H2"
+        key = (level, clean_text.lower(), page)
+        if key not in seen:
+            outline.append({"level": level, "text": clean_text + " ", "page": page})
+            seen.add(key)
+
+    return {"title": title, "outline": outline}
+
 
 def process_pdfs_in_directory():
+    INPUT_DIR = Path("/app/input")
+    OUTPUT_DIR = Path("/app/output")
     if not INPUT_DIR.exists():
         print("ERROR: Input directory not found.")
         return
-    
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    
     for filename in os.listdir(INPUT_DIR):
         if filename.lower().endswith(".pdf"):
             pdf_path = INPUT_DIR / filename
             output_path = OUTPUT_DIR / filename.replace(".pdf", ".json")
-            
             extracted_data = extract_outline_from_pdf(pdf_path)
             with open(output_path, 'w', encoding='utf-8') as f:
                 json.dump(extracted_data, f, indent=2, ensure_ascii=False)
+
 
 if __name__ == "__main__":
     process_pdfs_in_directory()
