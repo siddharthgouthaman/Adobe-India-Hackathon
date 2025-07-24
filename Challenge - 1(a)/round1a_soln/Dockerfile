@@ -8,9 +8,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy your main application script
-COPY main.py .
+# Copy all source code (including extractor/ folder)
+COPY . .
 
-# Command to run your script when the container starts
-# This will execute the process_pdfs_in_directory function in main.py
+# Run the main script
 CMD ["python", "main.py"]
