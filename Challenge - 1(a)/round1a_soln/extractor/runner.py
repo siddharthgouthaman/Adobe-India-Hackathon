@@ -1,29 +1,24 @@
 # extractor/runner.py
-
-import os
 import json
+import logging
 from pathlib import Path
-from extractor.parser import parse_pdf
-from extractor.title_extractor import extract_title
-from extractor.heading_extractor import extract_headings
+from extractor.heading_extractor import extract_title_and_outline
 
-def extract_outline_from_pdf(pdf_path: Path) -> dict:
-    all_text_elements, text_size_counts = parse_pdf(pdf_path)
-    title = extract_title(all_text_elements)
-    outline = extract_headings(all_text_elements, text_size_counts)
-    return {"title": title, "outline": outline}
+logger = logging.getLogger(__name__)
 
-def process_pdfs_in_directory():
-    INPUT_DIR = Path("/app/input")
-    OUTPUT_DIR = Path("/app/output")
-    if not INPUT_DIR.exists():
-        print("ERROR: Input directory not found.")
-        return
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    for filename in os.listdir(INPUT_DIR):
-        if filename.lower().endswith(".pdf"):
-            pdf_path = INPUT_DIR / filename
-            output_path = OUTPUT_DIR / filename.replace(".pdf", ".json")
-            extracted_data = extract_outline_from_pdf(pdf_path)
-            with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(extracted_data, f, indent=2, ensure_ascii=False)
+def process_pdfs_in_directory(input_dir="input", output_dir="output"):
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    input_path.mkdir(parents=True, exist_ok=True)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    for pdf_file in input_path.glob("*.pdf"):
+        try:
+            logger.info(f"Processing: {pdf_file.name}")
+            result = extract_title_and_outline(pdf_file)
+            out_file = output_path / (pdf_file.stem + ".json")
+            with open(out_file, "w", encoding="utf-8") as f:
+                json.dump(result, f, indent=4, ensure_ascii=False)
+            logger.info(f"✅ Saved output to {out_file}")
+        except Exception as e:
+            logger.error(f"❌ Failed to process {pdf_file.name}: {e}")
