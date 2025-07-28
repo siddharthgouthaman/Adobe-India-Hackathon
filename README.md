@@ -1,13 +1,33 @@
-# Adobe-India-Hackathon25
-docker build --platform linux/amd64 -t myr1asolution:latest .
-docker run --rm -v "$(pwd)/input:/app/input" -v "$(pwd)/output:/app/output" --network none myr1asolution:latest
+# Adobe Hackathon 2025 – "Connecting the Dots"
 
-5239-title issue
-5312-title and level issue, content ok
-114-all issue 
-stempathway-all issue
-topjump-all ;-;
--------------------------
-workingcode.py 
-*code working for two input pdfs(5239 and 5312)
-*other pdf have same issues as they had for other codes we have ran so far.
+Welcome to our solution for the Adobe India Hackathon 2025, where we reimagine PDFs as intelligent, interactive companions. This repository includes our solutions for:
+
+- **Round 1A**: Document Outline Extraction  
+- **Round 1B**: Persona-Driven Document Intelligence
+
+---
+
+## 🧠 Round 1A: Understand Your Document
+
+### 🎯 Problem Statement
+Build an offline solution that extracts the **Title**, and **structured headings (H1, H2, H3)** from a PDF (≤ 50 pages) and outputs them in the following JSON format:
+
+
+🎯 Problem Statement
+
+Given a collection of documents, a persona, and a job-to-be-done, intelligently extract and prioritize the most relevant sections.
+
+# 🧠 Adobe Hackathon 2025 — Round 1B: Persona-Driven Document Intelligence
+
+## 🧠 Challenge Summary
+
+Build an **offline document intelligence system** that takes:
+
+- A **persona** (e.g., "PhD Researcher in Computational Biology")
+- A **job-to-be-done** (e.g., "Review GNNs for drug discovery")
+- A **set of documents**
+
+…and **extracts and ranks the most relevant sections** to that persona’s task.
+
+---
+
