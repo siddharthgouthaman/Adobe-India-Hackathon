@@ -1,59 +1,68 @@
-# extractor/heading_extractor.py
-
-import re
+#heading_extractor.py
 from collections import defaultdict
+import re
+from .parser import extract_text_elements
+from .text_cleaner import clean_text
 
-def extract_headings(all_text_elements, text_size_counts):
-    body_font_size = max(text_size_counts, key=text_size_counts.get) if text_size_counts else 10.0
-    unique_sizes = sorted(set(text_size_counts.keys()), reverse=True)
-    heading_sizes = [sz for sz in unique_sizes if sz > body_font_size * 1.05]
-    heading_level_map = {sz: f"H{min(i+1, 5)}" for i, sz in enumerate(heading_sizes)}
+def extract_title_and_outline(pdf_path):
+    text_elements, font_size_counts = extract_text_elements(pdf_path)
 
-    candidates = []
-    combined_lines = defaultdict(str)
+    if not text_elements:
+        return {"title": "Empty Document", "outline": []}
 
-    for el in all_text_elements:
-        text = el["text"].strip()
-        if not text or len(text) < 3:
-            continue
-        if len(text.split()) > 18:
-            continue
-        if re.match(r"^[\u2022\-•]$", text):
-            continue
+    most_common_font = font_size_counts.most_common(1)[0][0] if font_size_counts else 10.0
+    all_font_sizes = [el["font_size"] for el in text_elements]
+    max_font_size = max(all_font_sizes) if all_font_sizes else most_common_font
+    num_pages = max(el["page"] for el in text_elements) + 1
 
-        is_heading = (
-            (el["font_size"] in heading_level_map and el["x0"] < 150) or
-            (el["is_bold"] and el["font_size"] > body_font_size and el["x0"] < 150)
-        )
+    is_poster_like = (most_common_font < max_font_size * 0.6) and num_pages < 3
 
-        if is_heading:
-            key = (el["page"], round(el["y0"]))
-            combined_lines[key] += (" " + text if combined_lines[key] else text)
+    lines_by_page = defaultdict(lambda: defaultdict(list))
+    for el in text_elements:
+        page = el["page"]
+        y_group = round(el["y0"] / 2) * 2
+        lines_by_page[page][y_group].append(el)
 
     outline = []
     seen = set()
-    for (page, y), text in sorted(combined_lines.items()):
-        clean_text = text.strip()
-        if not clean_text or len(clean_text) < 3:
-            continue
-        if clean_text.lower() in {"rfp", "to", "for"}:
-            continue
-        if re.match(r"^\d+\.\d+", clean_text):
-            level = "H3"
-        elif re.match(r"^\d+\.", clean_text):
-            level = "H1"
-        elif re.match(r"^appendix [a-z]:", clean_text.lower()):
-            level = "H2"
-        elif clean_text.endswith(":"):
-            level = "H3"
-        elif any(word in clean_text.lower() for word in ["summary", "background", "milestones"]):
-            level = "H2"
-        else:
-            level = "H2"
+    heading_threshold = max_font_size * 0.80
 
-        key = (level, clean_text.lower(), page)
-        if key not in seen:
-            outline.append({"level": level, "text": clean_text + " ", "page": page})
-            seen.add(key)
+    for page in sorted(lines_by_page.keys()):
+        for y in sorted(lines_by_page[page]):
+            spans = sorted(lines_by_page[page][y], key=lambda e: e["x0"])
+            combined_text = clean_text(" ".join(span["text"] for span in spans))
 
-    return outline
+            if not combined_text or len(combined_text) < 3:
+                continue
+            if combined_text.strip().endswith(':'):
+                continue
+            if not re.search(r'[a-zA-Z]{3,}', combined_text):
+                continue
+
+            avg_font_size = sum(s["font_size"] for s in spans) / len(spans)
+            is_bold = any(s["is_bold"] for s in spans)
+
+            is_heading = (
+                avg_font_size >= heading_threshold or
+                (is_bold and avg_font_size > most_common_font * 1.25)
+            )
+
+            if is_heading:
+                key = (combined_text.lower(), page)
+                if key not in seen:
+                    outline.append({
+                        "level": "H1",
+                        "text": combined_text,
+                        "page": page,
+                        "size": avg_font_size
+                    })
+                    seen.add(key)
+
+    if is_poster_like and outline:
+        best_heading = max(outline, key=lambda x: x["size"])
+        outline = [best_heading]
+
+    for item in outline:
+        del item["size"]
+
+    return {"title": "", "outline": outline}
