@@ -4,9 +4,15 @@ import fitz  # PyMuPDF
 from sentence_transformers import SentenceTransformer, util
 from datetime import datetime
 
-INPUT_DIR = "/app/input"
-OUTPUT_DIR = "/app/output"
+# Dynamically resolve paths
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+INPUT_DIR = os.path.join(BASE_DIR, "input")
+OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 
+# Ensure output folder exists
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# Load model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
@@ -14,6 +20,7 @@ def read_persona_json():
     for file in os.listdir(INPUT_DIR):
         if file.endswith(".json"):
             with open(os.path.join(INPUT_DIR, file)) as f:
+                print(f"✅ Loaded persona JSON: {file}")
                 return json.load(f)
     raise FileNotFoundError("Persona JSON not found in input directory.")
 
@@ -23,6 +30,7 @@ def extract_sections_from_pdfs():
     for file in os.listdir(INPUT_DIR):
         if file.endswith(".pdf"):
             path = os.path.join(INPUT_DIR, file)
+            print(f"📄 Processing PDF: {file}")
             doc = fitz.open(path)
             for page_num, page in enumerate(doc, start=1):
                 text = page.get_text()
@@ -32,6 +40,7 @@ def extract_sections_from_pdfs():
                         "page_number": page_num,
                         "text": text.strip()
                     })
+    print(f"✅ Extracted {len(sections)} sections from PDFs")
     return sections
 
 
@@ -82,8 +91,10 @@ def main():
     top_sections = rank_sections(sections, context_emb)
     output = build_output(persona_data, top_sections)
 
-    with open(os.path.join(OUTPUT_DIR, "output.json"), "w") as f:
+    output_path = os.path.join(OUTPUT_DIR, "output.json")
+    with open(output_path, "w") as f:
         json.dump(output, f, indent=2)
+    print(f"✅ Output saved to {output_path}")
 
 
 if __name__ == '__main__':
